@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>AeroSketch: Build & Control ✈️</title>
+  <link rel="stylesheet" href="src/styles.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- TOP BAR -->
+  <div id="topbar">
+    <div class="pill">
+      <span>🗺️</span>
+      <select id="airportPicker" aria-label="Pick an airport"></select>
+    </div>
+
+    <div id="modeSwitch">
+      <button id="btnFly" class="active">🛫 Fly Planes!</button>
+      <button id="btnBuild">✏️ Build</button>
+    </div>
+
+    <div class="right">
+      <div id="livesDisplay" class="pill lives" title="Safety Hearts">❤️❤️❤️</div>
+      <div class="pill stars" title="Stars earned">⭐ <span id="starCount">0</span></div>
+      <button id="btnZen" class="round" title="Zen View (Hide UI)">👁️</button>
+      <button id="btnAiSettings" class="round" title="AI Vision Settings">🤖</button>
+      <button id="btnNight" class="round" title="Day / Night">☀️</button>
+      <button id="btnHangar" class="bigpill">✈️ My Planes</button>
+    </div>
+  </div>
+
+  <!-- GEMINI AI SETTINGS MODAL -->
+  <div id="aiModal" class="hidden">
+    <div class="sheet alert-sheet">
+      <div class="sheethead" style="background:#f3e8ff; border-bottom:3px solid #0f172a; color:#6b21a8; justify-content:space-between;">
+        <div class="title">🤖 Gemini Vision AI Key</div>
+        <button id="aiModalClose" class="close">✖</button>
+      </div>
+      <div class="crash-body" style="text-align:left; align-items:stretch; gap:12px;">
+        <div style="font-size:14px; font-weight:700; color:#334155;">
+          To use true AI vision analysis on any uploaded drawing, enter your <b>Google Gemini API Key</b> below.
+        </div>
+        <input id="geminiApiKeyInput" type="password" placeholder="AIzaSy..." style="width:100%; padding:10px 14px; border:3px solid #0f172a; border-radius:14px; font-size:15px; font-weight:700; outline:none;" />
+        <div style="font-size:13px; color:#64748b; line-height:1.4;">
+          💡 Don't have a key? Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#7c3aed; font-weight:800; text-decoration:underline;">Google AI Studio</a>. It gets saved locally in your browser so you only have to enter it once!
+        </div>
+        <button id="btnSaveApiKey" class="action" style="background:#8b5cf6; margin-top:4px;">💾 Save AI Key</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CRASH / GAME OVER MODAL -->
+  <div id="crashOverlay" class="hidden">
+    <div class="sheet alert-sheet">
+      <div class="sheethead alert-head">
+        <div class="title" id="crashTitle">💥 RUNWAY ACCIDENT!</div>
+      </div>
+      <div class="crash-body">
+        <div class="crash-icon" id="crashIcon">💥</div>
+        <div class="crash-desc" id="crashDesc">Two airplanes collided because the runway wasn't cleared in time!</div>
+        <div class="crash-tip">💡 <b>Tower Controller Tip:</b> Tap landed planes quickly and send them to a <b>P</b> gate before the next plane touches down!</div>
+        <button id="btnTryAgain" class="action red-btn">🔄 Keep Airport Safe & Try Again!</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PILOT BUBBLE (Non-blocking corner toast) -->
+  <div id="pilotBubble" class="hidden-bubble">
+    <span id="pilotAvatar">🧑‍✈️</span>
+    <div class="pilot-msg">
+      <div id="pilotTitle">Welcome!</div>
+      <div id="pilotText">Let's fly!</div>
+    </div>
+    <button id="pilotBubbleClose" class="pilot-close" title="Dismiss">✖</button>
+  </div>
+
+  <!-- FLY DOCK -->
+  <div id="flyDock" class="dock">
+    <button id="btnLand" class="action green">🛬 Land New Plane!</button>
+    <button id="btnTakeoff" class="action blue">🚀 Take Off!</button>
+  </div>
+
+  <!-- BUILD DOCK -->
+  <div id="tray" class="hidden"></div>
+  <div id="tracePanel" class="hidden">
+    <div class="trace-row">
+      <div class="sample-pills">
+        <span class="sample-label">📐 Sketch:</span>
+        <button type="button" class="sample-btn active" data-src="public/sample-drawings/IMG_0412.png" title="Ca Mau 6-Star Terminal">⭐ Sketch 1 (Star Dome)</button>
+        <button type="button" class="sample-btn" data-src="public/sample-drawings/IMG_0414.png" title="Parallel Dual Runways">🛫 Sketch 2 (Dual Runways)</button>
+        <button type="button" class="sample-btn" data-src="public/sample-drawings/IMG_2958.png" title="Triangle Runways">🔺 Sketch 3 (Triangle)</button>
+      </div>
+      <label class="upload" title="Upload custom photo">📁 Upload Photo<input id="traceUpload" type="file" accept="image/*" /></label>
+      <div class="trace-slider">
+        <span>👀 Opacity</span>
+        <input id="traceOpacity" type="range" min="10" max="100" value="45" />
+      </div>
+    </div>
+    <div class="trace-row-action">
+      <button id="btnAiBuild" class="ai-build-btn">✨ AI Auto-Build from Photo</button>
+    </div>
+  </div>
+  <div id="buildDock" class="dock hidden">
+    <button id="btnCollapseDock" class="dock-collapse" title="Hide Tools (Press Tab)">▼</button>
+    <div class="dock-tools">
+      <button class="tool active" data-tool="runway"><b>🛫</b>Runway</button>
+      <button class="tool" data-tool="taxi"><b>🛣️</b>Road</button>
+      <button class="tool" data-tool="free_building"><b>🎨</b>Magic Pen</button>
+      <button class="tool" data-tool="pier"><b>✏️</b>Pier</button>
+      <button class="tool" data-tool="dome"><b>🏢</b>Stamps</button>
+      <button class="tool" data-tool="sign"><b>🪧</b>Signs</button>
+      <button class="tool" data-tool="erase"><b>🧽</b>Eraser</button>
+      <button id="btnTrace" class="tool purple"><b>📷</b>Trace</button>
+    </div>
+    <div class="mini">
+      <button id="btnSaveAirport" class="round small" title="Save Airport to Computer">💾</button>
+      <button id="btnLoadAirport" class="round small" title="Open Airport File">📂<input id="airportFileInput" type="file" accept=".json" style="display:none;" /></button>
+      <button id="btnUndo" class="round small" title="Undo">↩️</button>
+      <button id="btnReset" class="round small" title="Start over">🔄</button>
+    </div>
+  </div>
+  <button id="btnExpandDock" class="expand-dock-btn hidden" title="Show Tools (Press Tab)">🛠️ Build Tools ▲</button>
+
+  <!-- CAMERA HUD (Zoom & Pan Controls) -->
+  <div id="camHud" class="cam-hud">
+    <button id="btnZoomIn" class="cam-btn" title="Zoom In (Scroll Up)">➕</button>
+    <button id="btnZoomOut" class="cam-btn" title="Zoom Out (Scroll Down)">➖</button>
+    <button id="btnResetCam" class="cam-btn" title="Center Airport (Fit)">🎯 Fit</button>
+  </div>
+  <button id="btnExitZen" class="hidden" title="Exit Zen View">👁️ Exit Zen View</button>
+
+  <!-- HANGAR -->
+  <div id="hangar" class="hidden">
+    <div class="sheet">
+      <div class="sheethead">
+        <div class="title">🏆 My Airplane Hangar</div>
+        <button id="hangarClose" class="close">✖ Close</button>
+      </div>
+      <div id="hangarGrid"></div>
+    </div>
+  </div>
+
+  <!-- AI LOADING OVERLAY -->
+  <div id="aiLoadingOverlay" class="hidden">
+    <div class="ai-loading-box">
+      <div class="ai-spinner">🤖</div>
+      <div class="ai-title">Gemini AI Vision Analyzing Sketch...</div>
+      <div class="ai-subtitle">Scanning runways, magnetic headings, taxiways, and terminal concourses from your photo...</div>
+    </div>
+  </div>
+
+  <script src="src/types/game.js?v=4"></script>
+  <script src="src/data/planes.js?v=4"></script>
+  <script src="src/data/starterAirports.js?v=4"></script>
+  <script src="src/utils/sound.js?v=4"></script>
+  <script src="src/game.js?v=4"></script>
+</body>
+</html>
