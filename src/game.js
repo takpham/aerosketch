@@ -2003,8 +2003,8 @@
       say('📷', 'New Drawing Loaded!', 'Tap [✨ AI Auto-Build from Photo] to magically generate the airport!');
     };
 
-    // AI Auto-Build from Photo Feature using Gemini Vision
-    async function analyzeWithGemini(apiKey, base64Image) {
+    // AI Auto-Build from Photo Feature using Gemini Vision with Retry & Resilience
+    async function analyzeWithGemini(apiKey, base64Image, onStatus) {
       const prompt = `You are an expert aviation architect converting a child's hand-drawn airport blueprint sketch into a playable 2D vector coordinate map.
 The coordinate space is width 1200 by height 720 (X from 50 to 1150, Y from 50 to 670).
 Analyze the drawing carefully:
@@ -2033,38 +2033,100 @@ Respond ONLY with valid, raw JSON (no markdown formatting, no backticks, no mark
       const cleanBase64 = base64Image.replace(/^data:image\/\w+;base64,/, '');
       const mime = (base64Image.match(/^data:(image\/\w+);base64,/) || [])[1] || 'image/png';
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
-      const payload = {
-        contents: [
-          {
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: mime, data: cleanBase64 } }
-            ]
+      // Resilience cascade: retry with exponential backoff & jitter across multiple models
+      const models = ['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-2.5-flash'];
+      const maxAttempts = 4;
+      let lastError = null;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const modelName = models[Math.min(attempt - 1, models.length - 1)];
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+
+        const payload = {
+          contents: [
+            {
+              parts: [
+                { text: prompt },
+                { inline_data: { mime_type: mime, data: cleanBase64 } }
+              ]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: "application/json"
           }
-        ],
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: "application/json"
+        };
+
+        try {
+          if (attempt > 1 && onStatus) {
+            onStatus(`Traffic spike! Retrying with ${modelName} (Attempt ${attempt}/${maxAttempts})...`);
+          }
+
+          // AbortController with 25s timeout to avoid indefinite hangs during spikes
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 25000);
+
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            const errMsg = errJson.error?.message || `HTTP ${res.status}`;
+            const status = res.status;
+
+            // Retry on 429 (Rate Limit / Quota Spike), 503 (Overloaded), 500, 502, 504
+            const isRetryable = status === 429 || status === 500 || status === 502 || status === 503 || status === 504 ||
+              /spike|overload|quota|resource exhausted|unavailable|capacity|busy/i.test(errMsg);
+
+            if (isRetryable && attempt < maxAttempts) {
+              const backoffMs = Math.round(Math.pow(2, attempt - 1) * 1200 + Math.random() * 800);
+              const waitSec = (backoffMs / 1000).toFixed(1);
+              console.warn(`[Gemini Spike] Attempt ${attempt} HTTP ${status}: ${errMsg}. Retrying in ${waitSec}s...`);
+              if (onStatus) {
+                onStatus(`Gemini servers busy. Retrying in ${waitSec}s (Attempt ${attempt + 1}/${maxAttempts})...`);
+              }
+              await new Promise((r) => setTimeout(r, backoffMs));
+              continue;
+            }
+
+            throw new Error(errMsg);
+          }
+
+          const resData = await res.json();
+          const rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (!rawText) throw new Error("Empty response from Gemini Vision");
+          const cleaned = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+          return JSON.parse(cleaned);
+
+        } catch (err) {
+          lastError = err;
+          const isAbort = err.name === 'AbortError';
+          const isNetwork = !navigator.onLine || /network|failed to fetch/i.test(err.message || '');
+          const isTransient = isAbort || isNetwork;
+
+          if (isTransient && attempt < maxAttempts) {
+            const backoffMs = Math.round(Math.pow(2, attempt - 1) * 1500 + Math.random() * 600);
+            const waitSec = (backoffMs / 1000).toFixed(1);
+            console.warn(`[Gemini Transient Error] Attempt ${attempt}: ${err.message}. Retrying in ${waitSec}s...`);
+            if (onStatus) {
+              onStatus(`Connection busy. Retrying in ${waitSec}s (Attempt ${attempt + 1}/${maxAttempts})...`);
+            }
+            await new Promise((r) => setTimeout(r, backoffMs));
+            continue;
+          }
+
+          if (attempt >= maxAttempts) {
+            break;
+          }
         }
-      };
-
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error?.message || `HTTP ${res.status}`);
       }
 
-      const resData = await res.json();
-      const rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!rawText) throw new Error("Empty response from Gemini Vision");
-      const cleaned = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-      return JSON.parse(cleaned);
+      throw lastError || new Error("Failed to reach Gemini AI after retries.");
     }
 
     // Modal UI for AI Settings
@@ -2116,6 +2178,10 @@ Respond ONLY with valid, raw JSON (no markdown formatting, no backticks, no mark
         }
 
         const loadingOverlay = $('aiLoadingOverlay');
+        const titleEl = $('aiLoadingTitle');
+        const subEl = $('aiLoadingSub');
+        if (titleEl) titleEl.textContent = 'Gemini AI Vision Analyzing Sketch...';
+        if (subEl) subEl.textContent = 'Scanning runways, magnetic headings, taxiways, and terminal concourses from your photo...';
         if (loadingOverlay) loadingOverlay.classList.remove('hidden');
         Sound.streak();
         say('🤖', 'Gemini AI Vision Analyzing...', 'AI is scanning runways, concourse piers, domes, and taxiways from your photo...');
@@ -2136,7 +2202,12 @@ Respond ONLY with valid, raw JSON (no markdown formatting, no backticks, no mark
           ctxOff.drawImage(state.traceImg, 0, 0, w, h);
           const base64 = cvs.toDataURL('image/jpeg', 0.85);
 
-          const generated = await analyzeWithGemini(apiKey, base64);
+          const onStatus = (msg) => {
+            if (subEl) subEl.textContent = msg;
+            say('🤖', 'AI Busy — Retrying', msg);
+          };
+
+          const generated = await analyzeWithGemini(apiKey, base64, onStatus);
 
           if (!generated || (!generated.runways && !generated.stamps && !generated.taxiRoads)) {
             throw new Error("No airport features detected in drawing");
