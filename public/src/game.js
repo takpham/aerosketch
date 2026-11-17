@@ -2033,8 +2033,8 @@ Respond ONLY with valid, raw JSON (no markdown formatting, no backticks, no mark
       const cleanBase64 = base64Image.replace(/^data:image\/\w+;base64,/, '');
       const mime = (base64Image.match(/^data:(image\/\w+);base64,/) || [])[1] || 'image/png';
 
-      // Resilience cascade: retry with exponential backoff & jitter across multiple models
-      const models = ['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-2.5-flash'];
+      // Resilience cascade: healthy models first, with fallbacks across flash variants
+      const models = ['gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-3.5-flash-lite', 'gemini-3.8-flash'];
       const maxAttempts = 4;
       let lastError = null;
 
