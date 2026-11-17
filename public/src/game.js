@@ -2075,7 +2075,7 @@ Respond ONLY with valid, raw JSON (no markdown formatting, no backticks, no mark
     const apiKeyInput = $('geminiApiKeyInput');
 
     function getSavedApiKey() {
-      return localStorage.getItem('aerosketch:gemini_key') || '';
+      return localStorage.getItem('aerosketch:gemini_key') || window.GEMINI_API_KEY || '';
     }
 
     if (aiSettingsBtn && aiModal) {
