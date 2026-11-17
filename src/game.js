@@ -263,7 +263,7 @@
     const spots = [];
     const add = (x, y, key, label) => {
       if (x < 15 || x > REF_W - 15 || y < 15 || y > REF_H - 15) return;
-      if (spots.some((s) => Math.hypot(s.x - x, s.y - y) < 42)) return;
+      if (spots.some((s) => Math.hypot(s.x - x, s.y - y) < 28)) return;
       spots.push({ x, y, key, label });
     };
     const ordered = [...a.stamps].sort((p, q) => (p.type === 'gate' ? -1 : 0) - (q.type === 'gate' ? -1 : 0));
@@ -274,9 +274,28 @@
       else if (st.type === 'star_hub') {
         const arms = st.arms || 6;
         const r = st.radius || 110;
+        const centerDomeR = Math.min(r * 0.32, 58);
+        const armLengths = Array.isArray(st.armLengths) ? st.armLengths : null;
         for (let i = 0; i < arms; i++) {
-          const ang = starAngle(i, arms);
-          add(st.x + Math.cos(ang) * r * 1.02, st.y + Math.sin(ang) * r * 1.02, st.id + '-' + i, (st.label || 'T') + '-' + (i + 1));
+          const ang = (Array.isArray(st.armAngles) && st.armAngles[i] !== undefined)
+            ? st.armAngles[i]
+            : starAngle(i, arms);
+          const armLen = (armLengths && armLengths[i]) || r;
+          const concourseSpan = Math.max(30, armLen - centerDomeR - 20);
+          const numGates = Math.max(1, Math.floor(concourseSpan / 44));
+          const nx = -Math.sin(ang);
+          const ny = Math.cos(ang);
+          const cos = Math.cos(ang);
+          const sin = Math.sin(ang);
+          for (let g = 1; g <= numGates; g++) {
+            const d = centerDomeR + 14 + (g / (numGates + 1)) * concourseSpan;
+            const px = st.x + cos * d;
+            const py = st.y + sin * d;
+            add(px + nx * 32, py + ny * 32, `${st.id}-${i}-L${g}`, `G${i + 1}-${g}A`);
+            add(px - nx * 32, py - ny * 32, `${st.id}-${i}-R${g}`, `G${i + 1}-${g}B`);
+          }
+          // Tip gate
+          add(st.x + cos * (armLen + 16), st.y + sin * (armLen + 16), `${st.id}-${i}-tip`, `G${i + 1}-T`);
         }
       } else if (st.type === 'square_dome') {
         const w = st.width || 130;
@@ -301,12 +320,12 @@
       } else if (st.type === 'pier') {
         // Linear concourse pier: gates along left and right sides
         const len = Math.hypot(st.x2 - st.x1, st.y2 - st.y1);
-        if (len > 50) {
+        if (len > 40) {
           const dx = (st.x2 - st.x1) / len;
           const dy = (st.y2 - st.y1) / len;
           const nx = -dy;
           const ny = dx;
-          const numGates = Math.max(1, Math.floor(len / 65));
+          const numGates = Math.max(1, Math.floor(len / 42));
           for (let g = 1; g <= numGates; g++) {
             const t = (g / (numGates + 1)) * len;
             const px = st.x1 + dx * t;
@@ -314,6 +333,7 @@
             add(px + nx * 32, py + ny * 32, st.id + '-L' + g, 'Gate ' + g + 'A');
             add(px - nx * 32, py - ny * 32, st.id + '-R' + g, 'Gate ' + g + 'B');
           }
+          add(st.x2 + dx * 16, st.y2 + dy * 16, st.id + '-tip', 'Gate ' + (numGates + 1));
         }
       } else if (st.type === 'free_poly' && st.points && st.points.length >= 3) {
         // Freehand Drawn Building: compute perimeter and space gates along edges
@@ -965,7 +985,20 @@
       return inside;
     }
     if (st.type === 'pier') return distToSeg(x, y, st) < 26;
-    if (st.type === 'star_hub') return Math.hypot(st.x - x, st.y - y) < (st.radius || 110) * 0.9;
+    if (st.type === 'star_hub') {
+      const r = st.radius || 110;
+      const centerApronR = Math.min(r * 0.35, 65) + 16;
+      if (Math.hypot(st.x - x, st.y - y) < centerApronR) return true;
+      const arms = st.arms || 6;
+      for (let i = 0; i < arms; i++) {
+        const ang = (Array.isArray(st.armAngles) && st.armAngles[i] !== undefined) ? st.armAngles[i] : starAngle(i, arms);
+        const armLen = (Array.isArray(st.armLengths) && st.armLengths[i]) || r;
+        const x2 = st.x + Math.cos(ang) * armLen;
+        const y2 = st.y + Math.sin(ang) * armLen;
+        if (distToSeg(x, y, { x1: st.x, y1: st.y, x2, y2 }) < 26) return true;
+      }
+      return false;
+    }
     if (st.type === 'square_dome') return Math.abs(st.x - x) < (st.width || 130) / 2 && Math.abs(st.y - y) < (st.height || 95) / 2;
     if (st.type === 'midfield') return Math.abs(st.x - x) < 85 && Math.abs(st.y - y) < 40;
     if (st.type === 'crescent') return Math.hypot(st.x - x, st.y - y) < 125;
@@ -1010,9 +1043,9 @@
       const type = state.domeStamp;
       const count = a.stamps.filter((s) => s.type === 'star_hub' || s.type === 'square_dome' || s.type === 'midfield' || s.type === 'crescent').length;
       const st = { id: 'u' + Date.now() + Math.floor(Math.random() * 1000), type, x, y };
-      if (type === 'star_6') Object.assign(st, { type: 'star_hub', label: 'T' + (count + 1), arms: 6, radius: 110 });
-      else if (type === 'star_4') Object.assign(st, { type: 'star_hub', label: 'T' + (count + 1), arms: 4, radius: 105 });
-      else if (type === 'star_3') Object.assign(st, { type: 'star_hub', label: 'T' + (count + 1), arms: 3, radius: 100 });
+      if (type === 'star_6') Object.assign(st, { type: 'star_hub', label: 'T' + (count + 1), arms: 6, radius: 260 });
+      else if (type === 'star_4') Object.assign(st, { type: 'star_hub', label: 'T' + (count + 1), arms: 4, radius: 210 });
+      else if (type === 'star_3') Object.assign(st, { type: 'star_hub', label: 'T' + (count + 1), arms: 3, radius: 180 });
       else if (type === 'square_dome') Object.assign(st, { label: 'T' + (count + 1), width: 130, height: 95 });
       else if (type === 'midfield') Object.assign(st, { label: 'T' + (count + 1) + ' Satellite', width: 150, height: 60 });
       else if (type === 'crescent') Object.assign(st, { label: 'T' + (count + 1) + ' Crescent', radius: 100 });
@@ -1267,36 +1300,93 @@
     if (st.type === 'star_hub') {
       const r = st.radius || 110;
       const arms = st.arms || 6;
+      const centerApronR = Math.min(r * 0.35, 65) + 16;
+      const centerDomeR = Math.min(r * 0.32, 58);
+      const armLengths = Array.isArray(st.armLengths) ? st.armLengths : null;
+
+      // 1. Center Apron concrete disc
       ctx.fillStyle = P.concrete;
       ctx.strokeStyle = P.roadEdge;
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(st.x, st.y, r * 1.14, 0, Math.PI * 2);
+      ctx.arc(st.x, st.y, centerApronR, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+
+      // 2. Concrete Apron Finger per Arm (leaves open grass/taxiways between concourses!)
       for (let i = 0; i < arms; i++) {
+        const ang = (Array.isArray(st.armAngles) && st.armAngles[i] !== undefined) ? st.armAngles[i] : starAngle(i, arms);
+        const armLen = (armLengths && armLengths[i]) || r;
         ctx.save();
         ctx.translate(st.x, st.y);
-        ctx.rotate(starAngle(i, arms));
-        ctx.fillStyle = '#9ca3af';
-        ctx.fillRect(r * 0.78, -3.5, r * 0.16, 7);
+        ctx.rotate(ang);
+        ctx.fillStyle = P.concrete;
+        ctx.strokeStyle = P.roadEdge;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.roundRect(centerDomeR * 0.55, -26, armLen - centerDomeR * 0.55 + 16, 52, 14);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // 3. Concourse Finger Building Bodies, Skylights, and Jetbridges
+      for (let i = 0; i < arms; i++) {
+        const ang = (Array.isArray(st.armAngles) && st.armAngles[i] !== undefined) ? st.armAngles[i] : starAngle(i, arms);
+        const armLen = (armLengths && armLengths[i]) || r;
+        const concourseSpan = Math.max(30, armLen - centerDomeR - 20);
+        const numGates = Math.max(1, Math.floor(concourseSpan / 44));
+
+        ctx.save();
+        ctx.translate(st.x, st.y);
+        ctx.rotate(ang);
+
+        // Building body
         ctx.fillStyle = P.building;
         ctx.strokeStyle = P.ink;
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.roundRect(r * 0.2, -13, r * 0.62, 26, 10);
+        ctx.roundRect(centerDomeR * 0.7, -13, armLen - centerDomeR * 0.7, 26, 10);
         ctx.fill();
         ctx.stroke();
+
+        // Skylights along center
         ctx.fillStyle = state.night ? '#fde68a' : '#ffffff';
-        for (let w = r * 0.38; w < r * 0.78; w += 12) {
+        for (let w = centerDomeR + 15; w < armLen - 10; w += 20) {
           ctx.beginPath();
-          ctx.arc(w, 0, 2.6, 0, Math.PI * 2);
+          ctx.arc(w, 0, 2.8, 0, Math.PI * 2);
           ctx.fill();
         }
+
+        // Attached Jetbridge Gates along BOTH flanks!
+        for (let g = 1; g <= numGates; g++) {
+          const d = centerDomeR + 14 + (g / (numGates + 1)) * concourseSpan;
+          ctx.fillStyle = '#9ca3af';
+          ctx.fillRect(d - 3, -20, 6, 8);
+          ctx.fillRect(d - 3, 12, 6, 8);
+          ctx.strokeStyle = '#facc15';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.moveTo(d - 8, -20); ctx.lineTo(d + 8, -20);
+          ctx.moveTo(d - 8, 20); ctx.lineTo(d + 8, 20);
+          ctx.stroke();
+        }
+
+        // Tip Gate at the end of the concourse
+        ctx.fillStyle = '#9ca3af';
+        ctx.fillRect(armLen - 2, -4, 8, 8);
+        ctx.strokeStyle = '#facc15';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(armLen + 6, -8); ctx.lineTo(armLen + 6, 8);
+        ctx.stroke();
+
         ctx.restore();
       }
-      drawDomeGrid(st.x, st.y, r * 0.34, P);
-      labelPill(st.label || 'T1', st.x, st.y + r * 0.34 + 4, P);
+
+      // 4. Central Grand Glass Dome & Label
+      drawDomeGrid(st.x, st.y, centerDomeR, P);
+      labelPill(st.label || 'T1', st.x, st.y + centerDomeR + 14, P);
     } else if (st.type === 'square_dome') {
       const w = st.width || 130;
       const h = st.height || 95;
@@ -1418,7 +1508,7 @@
           ctx.fill();
         }
         // Attached Jetbridges along both sides!
-        const numGates = Math.max(1, Math.floor(L / 65));
+        const numGates = Math.max(1, Math.floor(L / 42));
         for (let g = 1; g <= numGates; g++) {
           const d = (g / (numGates + 1)) * L;
           ctx.fillStyle = '#9ca3af';
@@ -2006,27 +2096,49 @@
     // AI Auto-Build from Photo Feature using Gemini Vision with Retry & Resilience
     async function analyzeWithGemini(apiKey, base64Image, onStatus) {
       const prompt = `You are an expert aviation architect converting a child's hand-drawn airport blueprint sketch into a playable 2D vector coordinate map.
-The coordinate space is width 1200 by height 720 (X from 50 to 1150, Y from 50 to 670).
-Analyze the drawing carefully:
-1. Detect all runways: long straight landing strips. Output start (x1, y1) and end (x2, y2). Calculate magnetic heading labels (e.g., '18L', '36R', '09', '27') based on line angle. If there are 2 parallel vertical runways (like in a dual runway layout), detect BOTH.
-2. Detect taxiway roads: connecting taxi paths and exits connecting runways to terminals.
-3. Detect terminals & concourses:
-   - ONLY if there is a central circular hub with radiating star arms/piers, use type 'star_hub' (with x, y, arms: 4 to 8, radius: 90 to 140, label).
-   - If there are rectangular terminal buildings or main concourses, use type 'square_dome' (with x, y, width: 100 to 180, height: 70 to 120, label).
-   - If there are long concourse piers or satellites, use type 'pier' (x1, y1, x2, y2) or 'midfield' (x, y).
-   - If there are control towers, helipads, or cargo aprons, include type 'tower', 'helipad', or 'cargo'.
+The coordinate space is width 1200 by height 720 (X from 50 to 1150, Y from 50 to 670). Center is (600, 360).
+
+CRITICAL ARCHITECTURAL RULES & PROPORTIONS:
+1. RETAIN TRUE GEOMETRY & PROPORTIONS:
+   - Scale features proportionally across the whole 1200x720 canvas. Do not shrink large complexes into tiny stubby shapes.
+   - Runways: Detect their full length spanning from edge to edge.
+     * In dual vertical runway designs (like the sketch), Left runway runs near x: 70-120 (y: 60 to 660, heading '18R'/'36L'). Right runway runs near x: 1080-1130 (y: 60 to 660, heading '18L'/'36R').
+   - Taxiway networks: Connect runway thresholds and exits to parallel taxiways and concourse aprons.
+
+2. STAR TERMINALS & MULTI-CONCOURSE PIERS (HIGH FIDELITY):
+   - When the drawing shows a large multi-arm / multi-concourse terminal (such as a 6-concourse star hub with dozens of gates radiating outward):
+     * Option A (Star Hub): Output type 'star_hub' at center (e.g. x: 600, y: 360) with:
+       "arms": 6,
+       "radius": 280 to 350 (MUST BE LARGE so the arms stretch across the apron toward the runways, exactly like the drawing!),
+       "label": "Terminal 1 - Central Hub & Hotel"
+     * Option B (Concourse Piers): Or output the central spine/hall as type 'square_dome' (x: 600, y: 360, width: 120, height: 180, label: "Terminal / Hotel"), AND output each radiating finger as type 'pier' with start (x1, y1) at the center and end (x2, y2) extending out (e.g. concourses stretching NW, W, SW, NE, E, SE).
+     * DO NOT generate random disconnected crescent or trapezoid buildings around the star hub unless clearly drawn as separate standalone satellite terminals!
+     * If the drawing has special aprons or facilities (e.g., 'MIL' military apron at bottom-right), include type 'cargo' (x: 1040, y: 585, label: "MIL Apron").
+
+3. BUILDING TYPES:
+   - 'star_hub': { id, type: 'star_hub', x, y, arms: 4..8, radius: 240..350, label }
+   - 'pier': { id, type: 'pier', x1, y1, x2, y2, label } (for long linear concourse fingers with gates on both sides)
+   - 'square_dome': { id, type: 'square_dome', x, y, width: 100..200, height: 70..180, label }
+   - 'tower': { id, type: 'tower', x, y, label: 'TWR' }
+   - 'cargo': { id, type: 'cargo', x, y, label } (for cargo / military / maintenance aprons)
+   - 'helipad': { id, type: 'helipad', x, y, label: 'H' }
 
 Respond ONLY with valid, raw JSON (no markdown formatting, no backticks, no markdown fence):
 {
-  "runways": [ {"id":"r1", "x1":120, "y1":280, "x2":1060, "y2":280, "label1":"18L", "label2":"36R"} ],
-  "taxiRoads": [ {"x1":160, "y1":195, "x2":980, "y2":195} ],
+  "runways": [
+    {"id":"r1", "x1":70, "y1":60, "x2":70, "y2":660, "label1":"18R", "label2":"36L"},
+    {"id":"r2", "x1":1130, "y1":60, "x2":1130, "y2":660, "label1":"18L", "label2":"36R"}
+  ],
+  "taxiRoads": [
+    {"x1":130, "y1":60, "x2":130, "y2":660},
+    {"x1":1070, "y1":60, "x2":1070, "y2":660}
+  ],
   "stamps": [
-    {"id":"t1", "type":"square_dome", "x":600, "y":360, "width":140, "height":100, "label":"T1"},
-    {"id":"g1", "type":"gate", "x":430, "y":155, "label":"G1"},
-    {"id":"twr1", "type":"tower", "x":600, "y":220, "label":"TWR"}
+    {"id":"hub", "type":"star_hub", "x":600, "y":360, "arms":6, "radius":310, "label":"Terminal 1 - Central Hub & Hotel"},
+    {"id":"mil", "type":"cargo", "x":1040, "y":585, "label":"MIL Apron"}
   ],
   "signs": [
-    {"x":320, "y":360, "kind":"location", "text":"A"}
+    {"x":145, "y":100, "kind":"location", "text":"A1"}
   ]
 }`;
 
@@ -2225,21 +2337,28 @@ Respond ONLY with valid, raw JSON (no markdown formatting, no backticks, no mark
               x1: Math.round(t.x1), y1: Math.round(t.y1),
               x2: Math.round(t.x2), y2: Math.round(t.y2)
             })),
-            stamps: (generated.stamps || []).map((s, i) => ({
-              id: s.id || 'st' + i,
-              type: s.type || 'square_dome',
-              x: Math.round(s.x || 600),
-              y: Math.round(s.y || 360),
-              label: s.label || 'T' + (i + 1),
-              arms: s.arms || 6,
-              radius: s.radius || 110,
-              width: s.width || 130,
-              height: s.height || 95,
-              x1: s.x1 ? Math.round(s.x1) : undefined,
-              y1: s.y1 ? Math.round(s.y1) : undefined,
-              x2: s.x2 ? Math.round(s.x2) : undefined,
-              y2: s.y2 ? Math.round(s.y2) : undefined,
-            })),
+            stamps: (generated.stamps || []).map((s, i) => {
+              const x1 = s.x1 !== undefined ? Math.round(s.x1) : undefined;
+              const y1 = s.y1 !== undefined ? Math.round(s.y1) : undefined;
+              const x2 = s.x2 !== undefined ? Math.round(s.x2) : undefined;
+              const y2 = s.y2 !== undefined ? Math.round(s.y2) : undefined;
+              const defaultX = (x1 !== undefined && x2 !== undefined) ? Math.round((x1 + x2) / 2) : 600;
+              const defaultY = (y1 !== undefined && y2 !== undefined) ? Math.round((y1 + y2) / 2) : 360;
+              return {
+                id: s.id || 'st' + i,
+                type: s.type || 'square_dome',
+                x: s.x !== undefined ? Math.round(s.x) : defaultX,
+                y: s.y !== undefined ? Math.round(s.y) : defaultY,
+                label: s.label || 'T' + (i + 1),
+                arms: s.arms || 6,
+                radius: s.radius ? Math.round(s.radius) : (s.type === 'star_hub' ? 300 : 110),
+                width: s.width || 130,
+                height: s.height || 95,
+                armLengths: Array.isArray(s.armLengths) ? s.armLengths.map(Number) : undefined,
+                armAngles: Array.isArray(s.armAngles) ? s.armAngles.map(Number) : undefined,
+                x1, y1, x2, y2,
+              };
+            }),
             signs: generated.signs || []
           };
 
